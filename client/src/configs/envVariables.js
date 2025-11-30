@@ -2,7 +2,7 @@ const Reset = '\x1b[0m';
 const FgYellow = '\x1b[33m';
 
 const APP_ENV = 'prod'
-let APP_HOST = ''
+let APP_HOST = 'https://mernchat-production-d169.up.railway.app'
 
 switch (APP_ENV) {
     case 'local':
@@ -15,7 +15,7 @@ switch (APP_ENV) {
         break;
     default:
         console.log('connecting to default api (local)')
-        APP_HOST = 'http://localhost:5000'
+        APP_HOST = 'https://affectionate-benevolence-production-220f.up.railway.app'
         break;
 }
 
