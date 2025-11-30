@@ -33,7 +33,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/cloud", cloudRoutes);
 
-const PORT = process.env.PORT || 8989;
+const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, () => {
   console.log(`Server running on Port ${PORT}`);
 });
