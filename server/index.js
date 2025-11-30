@@ -37,6 +37,7 @@ mongoose
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/cloud", cloudRoutes);
+app.get('/', (req, res) => res.send('ok'));
 
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, () => {
