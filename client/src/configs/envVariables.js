@@ -11,7 +11,7 @@ switch (APP_ENV) {
         break;
     case 'prod':
         console.log('connecting to prod')
-        APP_HOST = 'https://chatsapp-iu36.onrender.com'
+        APP_HOST = 'https://affectionate-benevolence-production-220f.up.railway.app'
         break;
     default:
         console.log('connecting to default api (local)')
