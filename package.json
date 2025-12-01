@@ -1,5 +1,5 @@
 {
-  "name": "WebRTC-Example",
+  "name": "webrtc-example",
   "version": "1.0.0",
   "description": "An 'as simple as it gets' WebRTC example.",
   "main": "index.js",
@@ -20,5 +20,8 @@
   "homepage": "https://github.com/shanet/WebRTC-Example",
   "dependencies": {
     "ws": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
