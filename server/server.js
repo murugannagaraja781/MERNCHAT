@@ -1,113 +1,186 @@
-const path = require('path');
-const fs = require('fs');
+const express = require('express');
 const http = require('http');
-const https = require('https');
-const WebSocket = require('ws');
-const WebSocketServer = WebSocket.Server;
+const socketIO = require('socket.io');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
 
-// Detect environment - Railway sets PORT env variable
-const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.env.PORT;
-const PORT = process.env.PORT || 8443;
+const Room = require('./models/Room');
 
-function main() {
-  const server = IS_PRODUCTION ? startHttpServer() : startHttpsServer();
-  startWebSocketServer(server);
-  printHelp();
-}
-
-function startHttpServer() {
-  console.log('Starting HTTP server (production mode)...');
-  const handleRequest = createRequestHandler();
-  const httpServer = http.createServer(handleRequest);
-  httpServer.listen(PORT, '0.0.0.0');
-  return httpServer;
-}
-
-function startHttpsServer() {
-  console.log('Starting HTTPS server (development mode)...');
-
-  // Check if certificates exist
-  const keyPath = path.join(__dirname, '..', 'key.pem');
-  const certPath = path.join(__dirname, '..', 'cert.pem');
-
-  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
-    console.error('ERROR: TLS certificates not found!');
-    console.error('Please run: ./generate_cert.sh');
-    process.exit(1);
+const app = express();
+const server = http.createServer(app);
+const io = socketIO(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST']
   }
+});
 
-  const serverConfig = {
-    key: fs.readFileSync(keyPath),
-    cert: fs.readFileSync(certPath),
-  };
+app.use(cors());
+app.use(express.json());
 
-  const handleRequest = createRequestHandler();
-  const httpsServer = https.createServer(serverConfig, handleRequest);
-  httpsServer.listen(PORT, '0.0.0.0');
-  return httpsServer;
-}
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/webrtc-calls')
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.log('MongoDB error:', err));
 
-function createRequestHandler() {
-  const clientDir = path.join(__dirname, '..', 'client');
+// REST API Routes
+app.post('/api/room/create', async (req, res) => {
+  try {
+    const roomId = uuidv4();
+    const room = new Room({ roomId });
+    await room.save();
+    res.json({ roomId, url: `${process.env.CLIENT_URL}/room/${roomId}` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create room' });
+  }
+});
 
-  return (request, response) => {
-    console.log(`request received: ${request.url}`);
-
-    // This server only serves two files: The HTML page and the client JS file
-    if(request.url === '/') {
-      response.writeHead(200, {'Content-Type': 'text/html'});
-      response.end(fs.readFileSync(path.join(clientDir, 'index.html')));
-    } else if(request.url === '/webrtc.js') {
-      response.writeHead(200, {'Content-Type': 'application/javascript'});
-      response.end(fs.readFileSync(path.join(clientDir, 'webrtc.js')));
-    } else {
-      response.writeHead(404);
-      response.end('Not Found');
+app.get('/api/room/:id/join', async (req, res) => {
+  try {
+    const room = await Room.findOne({ roomId: req.params.id, active: true });
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
     }
-  };
-}
+    res.json({ roomId: room.roomId, exists: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to join room' });
+  }
+});
 
-function startWebSocketServer(server) {
-  // Create a server for handling websocket calls
-  const wss = new WebSocketServer({server: server});
+// Socket.IO signaling
+const rooms = new Map();
 
-  wss.on('connection', (ws) => {
-    console.log('New WebSocket connection established');
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
 
-    ws.on('message', (message) => {
-      // Broadcast any received message to all clients
-      console.log(`received: ${message}`);
-      wss.broadcast(message);
+  socket.on('join-room', async ({ roomId, userName }) => {
+    socket.join(roomId);
+
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, new Map());
+    }
+
+    const roomUsers = rooms.get(roomId);
+    roomUsers.set(socket.id, { userName, socketId: socket.id });
+
+    // Update MongoDB
+    try {
+      await Room.findOneAndUpdate(
+        { roomId },
+        {
+          $push: {
+            participants: {
+              socketId: socket.id,
+              joinedAt: new Date()
+            }
+          }
+        }
+      );
+    } catch (error) {
+      console.error('DB update error:', error);
+    }
+
+    // Get all users in room except sender
+    const otherUsers = Array.from(roomUsers.values()).filter(u => u.socketId !== socket.id);
+
+    // Send existing users to new user
+    socket.emit('all-users', otherUsers);
+
+    // Notify others about new user
+    socket.to(roomId).emit('user-joined', {
+      socketId: socket.id,
+      userName
     });
 
-    ws.on('close', () => {
-      console.log('WebSocket connection closed');
+    console.log(`${userName} joined room ${roomId}`);
+  });
+
+  socket.on('offer', ({ offer, to, from, userName }) => {
+    io.to(to).emit('offer', { offer, from, userName });
+  });
+
+  socket.on('answer', ({ answer, to }) => {
+    io.to(to).emit('answer', { answer, from: socket.id });
+  });
+
+  socket.on('ice-candidate', ({ candidate, to }) => {
+    io.to(to).emit('ice-candidate', { candidate, from: socket.id });
+  });
+
+  socket.on('chat-message', ({ roomId, message, userName }) => {
+    io.to(roomId).emit('chat-message', {
+      message,
+      userName,
+      socketId: socket.id,
+      timestamp: new Date()
     });
   });
 
-  wss.broadcast = function(data) {
-    this.clients.forEach((client) => {
-      if(client.readyState === WebSocket.OPEN) {
-        client.send(data, {binary: false});
-      }
+  socket.on('raise-hand', ({ roomId, userName }) => {
+    socket.to(roomId).emit('hand-raised', {
+      socketId: socket.id,
+      userName
     });
-  };
-}
+  });
 
-function printHelp() {
-  const protocol = IS_PRODUCTION ? 'http' : 'https';
-  const host = IS_PRODUCTION ? `0.0.0.0:${PORT}` : `localhost:${PORT}`;
+  socket.on('toggle-audio', ({ roomId, enabled }) => {
+    socket.to(roomId).emit('user-audio-toggle', {
+      socketId: socket.id,
+      enabled
+    });
+  });
 
-  console.log(`\n✓ Server running in ${IS_PRODUCTION ? 'PRODUCTION' : 'DEVELOPMENT'} mode`);
-  console.log(`✓ Visit ${protocol}://${host} in your browser\n`);
+  socket.on('toggle-video', ({ roomId, enabled }) => {
+    socket.to(roomId).emit('user-video-toggle', {
+      socketId: socket.id,
+      enabled
+    });
+  });
 
-  if (!IS_PRODUCTION) {
-    console.log('Development mode notes:');
-    console.log('  * Note the HTTPS in the URL; there is no HTTP -> HTTPS redirect.');
-    console.log('  * You\'ll need to accept the invalid TLS certificate as it is self-signed.');
-    console.log('  * Some browsers or OSs may not allow the webcam to be used by multiple pages at once.');
-    console.log('    You may need to use two different browsers or machines.\n');
+  socket.on('leave-room', async ({ roomId }) => {
+    await handleUserLeave(socket, roomId);
+  });
+
+  socket.on('disconnect', async () => {
+    console.log('User disconnected:', socket.id);
+
+    // Find and leave all rooms
+    for (const [roomId, users] of rooms.entries()) {
+      if (users.has(socket.id)) {
+        await handleUserLeave(socket, roomId);
+      }
+    }
+  });
+
+  async function handleUserLeave(socket, roomId) {
+    const roomUsers = rooms.get(roomId);
+    if (roomUsers) {
+      const user = roomUsers.get(socket.id);
+      roomUsers.delete(socket.id);
+
+      if (roomUsers.size === 0) {
+        rooms.delete(roomId);
+        // Mark room as inactive
+        try {
+          await Room.findOneAndUpdate({ roomId }, { active: false });
+        } catch (error) {
+          console.error('DB update error:', error);
+        }
+      }
+
+      socket.to(roomId).emit('user-left', {
+        socketId: socket.id,
+        userName: user?.userName
+      });
+    }
+
+    socket.leave(roomId);
   }
-}
+});
 
-main();
+const PORT = process.env.PORT || 7009;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
