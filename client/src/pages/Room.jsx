@@ -52,7 +52,7 @@ function Room() {
     }
   };
 
-  const addMessage = (text, type, sender = '', senderId = '') => {
+  const addMessage = useCallback((text, type, sender = '', senderId = '') => {
     setMessages(prev => [...prev, {
       text,
       type,
@@ -60,9 +60,9 @@ function Room() {
       senderId,
       timestamp: new Date()
     }]);
-  };
+  }, []);
 
-  const removePeer = (socketId) => {
+  const removePeer = useCallback((socketId) => {
     const pc = peerConnectionsRef.current.get(socketId);
     if (pc) {
       pc.close();
@@ -74,7 +74,7 @@ function Room() {
       newPeers.delete(socketId);
       return newPeers;
     });
-  };
+  }, []);
 
   const createPeerConnection = useCallback((socketId, isInitiator, peerUserName) => {
     if (peerConnectionsRef.current.has(socketId)) {
