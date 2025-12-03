@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: 'https://affectionate-benevolence-production-220f.up.railway.app',
     methods: ['GET', 'POST']
   }
 });

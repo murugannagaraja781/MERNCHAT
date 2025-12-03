@@ -47,5 +47,5 @@
       "!src/reportWebVitals.js"
     ]
   },
-  "proxy": "http://localhost:7009"
+  "proxy": "https://mernchat-production-d169.up.railway.app"
 }

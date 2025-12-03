@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Home.css';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:7009';
+const API_URL ='https://mernchat-production-d169.up.railway.app'
 
 function Home() {
   const [roomId, setRoomId] = useState('');
