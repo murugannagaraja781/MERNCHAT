@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import './Room.css';
@@ -47,7 +47,7 @@ function Room() {
     return () => {
       cleanup();
     };
-  }, []);
+  }, [userName, navigate, initializeSocket]);
 
   const initializeMedia = async () => {
     try {
@@ -66,7 +66,7 @@ function Room() {
     }
   };
 
-  const initializeSocket = () => {
+  const initializeSocket = useCallback(() => {
     socketRef.current = io(SOCKET_URL, {
       reconnection: true,
       reconnectionDelay: 1000,
@@ -149,7 +149,7 @@ function Room() {
       console.log('Reconnected to server');
       socketRef.current.emit('join-room', { roomId, userName });
     });
-  };
+  }, [roomId, userName]);
 
   const createPeerConnection = (socketId, isInitiator, peerUserName) => {
     if (peerConnectionsRef.current.has(socketId)) {
