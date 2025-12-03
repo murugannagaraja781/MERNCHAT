@@ -35,20 +35,6 @@ function Room() {
   const peerConnectionsRef = useRef(new Map());
   const remoteStreamsRef = useRef(new Map());
 
-  useEffect(() => {
-    if (!userName) {
-      navigate('/');
-      return;
-    }
-
-    initializeMedia();
-    initializeSocket();
-
-    return () => {
-      cleanup();
-    };
-  }, [userName, navigate, initializeSocket]);
-
   const initializeMedia = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -66,92 +52,31 @@ function Room() {
     }
   };
 
-  const initializeSocket = useCallback(() => {
-    socketRef.current = io(SOCKET_URL, {
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 10
+  const addMessage = (text, type, sender = '', senderId = '') => {
+    setMessages(prev => [...prev, {
+      text,
+      type,
+      sender,
+      senderId,
+      timestamp: new Date()
+    }]);
+  };
+
+  const removePeer = (socketId) => {
+    const pc = peerConnectionsRef.current.get(socketId);
+    if (pc) {
+      pc.close();
+      peerConnectionsRef.current.delete(socketId);
+    }
+    remoteStreamsRef.current.delete(socketId);
+    setPeers(prev => {
+      const newPeers = new Map(prev);
+      newPeers.delete(socketId);
+      return newPeers;
     });
+  };
 
-    socketRef.current.emit('join-room', { roomId, userName });
-
-    socketRef.current.on('all-users', (users) => {
-      users.forEach(user => {
-        createPeerConnection(user.socketId, true, user.userName);
-      });
-      setParticipants(prev => [...prev, ...users]);
-    });
-
-    socketRef.current.on('user-joined', ({ socketId, userName: newUserName }) => {
-      setParticipants(prev => [...prev, { socketId, userName: newUserName }]);
-      addMessage(`${newUserName} joined the room`, 'system');
-    });
-
-    socketRef.current.on('offer', async ({ offer, from, userName: senderName }) => {
-      const pc = createPeerConnection(from, false, senderName);
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socketRef.current.emit('answer', { answer, to: from });
-    });
-
-    socketRef.current.on('answer', async ({ answer, from }) => {
-      const pc = peerConnectionsRef.current.get(from);
-      if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      }
-    });
-
-    socketRef.current.on('ice-candidate', async ({ candidate, from }) => {
-      const pc = peerConnectionsRef.current.get(from);
-      if (pc && candidate) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-    });
-
-    socketRef.current.on('user-left', ({ socketId, userName: leftUserName }) => {
-      removePeer(socketId);
-      setParticipants(prev => prev.filter(p => p.socketId !== socketId));
-      addMessage(`${leftUserName || 'User'} left the room`, 'system');
-    });
-
-    socketRef.current.on('chat-message', ({ message, userName: senderName, socketId, timestamp }) => {
-      addMessage(message, 'user', senderName, socketId);
-    });
-
-    socketRef.current.on('hand-raised', ({ socketId, userName: raiserName }) => {
-      addMessage(`${raiserName} raised hand`, 'system');
-    });
-
-    socketRef.current.on('user-audio-toggle', ({ socketId, enabled }) => {
-      setPeers(prev => {
-        const newPeers = new Map(prev);
-        const peer = newPeers.get(socketId);
-        if (peer) {
-          newPeers.set(socketId, { ...peer, audioEnabled: enabled });
-        }
-        return newPeers;
-      });
-    });
-
-    socketRef.current.on('user-video-toggle', ({ socketId, enabled }) => {
-      setPeers(prev => {
-        const newPeers = new Map(prev);
-        const peer = newPeers.get(socketId);
-        if (peer) {
-          newPeers.set(socketId, { ...peer, videoEnabled: enabled });
-        }
-        return newPeers;
-      });
-    });
-
-    socketRef.current.on('reconnect', () => {
-      console.log('Reconnected to server');
-      socketRef.current.emit('join-room', { roomId, userName });
-    });
-  }, [roomId, userName]);
-
-  const createPeerConnection = (socketId, isInitiator, peerUserName) => {
+  const createPeerConnection = useCallback((socketId, isInitiator, peerUserName) => {
     if (peerConnectionsRef.current.has(socketId)) {
       return peerConnectionsRef.current.get(socketId);
     }
@@ -219,21 +144,106 @@ function Room() {
     }
 
     return pc;
-  };
+  }, [userName]);
 
-  const removePeer = (socketId) => {
-    const pc = peerConnectionsRef.current.get(socketId);
-    if (pc) {
-      pc.close();
-      peerConnectionsRef.current.delete(socketId);
-    }
-    remoteStreamsRef.current.delete(socketId);
-    setPeers(prev => {
-      const newPeers = new Map(prev);
-      newPeers.delete(socketId);
-      return newPeers;
+  const initializeSocket = useCallback(() => {
+    socketRef.current = io(SOCKET_URL, {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 10
     });
-  };
+
+    socketRef.current.emit('join-room', { roomId, userName });
+
+    socketRef.current.on('all-users', (users) => {
+      users.forEach(user => {
+        createPeerConnection(user.socketId, true, user.userName);
+      });
+      setParticipants(prev => [...prev, ...users]);
+    });
+
+    socketRef.current.on('user-joined', ({ socketId, userName: newUserName }) => {
+      setParticipants(prev => [...prev, { socketId, userName: newUserName }]);
+      addMessage(`${newUserName} joined the room`, 'system');
+    });
+
+    socketRef.current.on('offer', async ({ offer, from, userName: senderName }) => {
+      const pc = createPeerConnection(from, false, senderName);
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socketRef.current.emit('answer', { answer, to: from });
+    });
+
+    socketRef.current.on('answer', async ({ answer, from }) => {
+      const pc = peerConnectionsRef.current.get(from);
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+    });
+
+    socketRef.current.on('ice-candidate', async ({ candidate, from }) => {
+      const pc = peerConnectionsRef.current.get(from);
+      if (pc && candidate) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    });
+
+    socketRef.current.on('user-left', ({ socketId, userName: leftUserName }) => {
+      removePeer(socketId);
+      setParticipants(prev => prev.filter(p => p.socketId !== socketId));
+      addMessage(`${leftUserName || 'User'} left the room`, 'system');
+    });
+
+    socketRef.current.on('chat-message', ({ message, userName: senderName }) => {
+      addMessage(message, 'user', senderName);
+    });
+
+    socketRef.current.on('hand-raised', ({ userName: raiserName }) => {
+      addMessage(`${raiserName} raised hand`, 'system');
+    });
+
+    socketRef.current.on('user-audio-toggle', ({ socketId, enabled }) => {
+      setPeers(prev => {
+        const newPeers = new Map(prev);
+        const peer = newPeers.get(socketId);
+        if (peer) {
+          newPeers.set(socketId, { ...peer, audioEnabled: enabled });
+        }
+        return newPeers;
+      });
+    });
+
+    socketRef.current.on('user-video-toggle', ({ socketId, enabled }) => {
+      setPeers(prev => {
+        const newPeers = new Map(prev);
+        const peer = newPeers.get(socketId);
+        if (peer) {
+          newPeers.set(socketId, { ...peer, videoEnabled: enabled });
+        }
+        return newPeers;
+      });
+    });
+
+    socketRef.current.on('reconnect', () => {
+      console.log('Reconnected to server');
+      socketRef.current.emit('join-room', { roomId, userName });
+    });
+  }, [roomId, userName, createPeerConnection, addMessage, removePeer]);
+
+  useEffect(() => {
+    if (!userName) {
+      navigate('/');
+      return;
+    }
+
+    initializeMedia();
+    initializeSocket();
+
+    return () => {
+      cleanup();
+    };
+  }, [userName, navigate, initializeSocket]);
 
   const toggleAudio = () => {
     if (localStreamRef.current) {
@@ -327,16 +337,6 @@ function Room() {
   const raiseHand = () => {
     socketRef.current.emit('raise-hand', { roomId, userName });
     addMessage('You raised your hand', 'system');
-  };
-
-  const addMessage = (text, type, sender = '', senderId = '') => {
-    setMessages(prev => [...prev, {
-      text,
-      type,
-      sender,
-      senderId,
-      timestamp: new Date()
-    }]);
   };
 
   const leaveRoom = () => {
